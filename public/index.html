@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>JGBsDaily – Japanese Government Bond Yields</title>
+    <title>JGBsDaily – Sovereign Bond Yields</title>
     <link rel="stylesheet" href="style.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 </head>
@@ -12,18 +12,15 @@
 <body>
     <header>
         <h1>JGBsDaily</h1>
-        <p class="subtitle">Japanese Government Bond Yield Curves</p>
+        <p class="subtitle" id="page-subtitle">Japanese Government Bond Yield Curves</p>
     </header>
 
     <main>
-        <!-- Toggle -->
-        <div class="toggle-container">
-            <span class="toggle-label" id="label-simple">Simple Yield</span>
-            <label class="switch">
-                <input type="checkbox" id="yield-toggle">
-                <span class="slider"></span>
-            </label>
-            <span class="toggle-label" id="label-compound">Compound Yield</span>
+        <!-- Tab bar -->
+        <div class="tab-bar">
+            <button class="tab-btn active" data-tab="jgb">JGB</button>
+            <button class="tab-btn" data-tab="ust">UST</button>
+            <button class="tab-btn" data-tab="egb">EGB</button>
         </div>
 
         <div class="meta-info">
@@ -55,46 +52,52 @@
             </table>
         </div>
 
-        <!-- RV: Curve Spreads -->
-        <h2 class="section-title">Curve Spreads (bps)</h2>
-        <div class="table-wrapper">
-            <table id="spread-table">
-                <thead id="spread-thead"></thead>
-                <tbody id="spread-tbody"></tbody>
-            </table>
-        </div>
+        <!-- JGB-only sections -->
+        <div id="jgb-sections">
+            <!-- RV: Curve Spreads -->
+            <h2 class="section-title">Curve Spreads (bps)</h2>
+            <div class="table-wrapper">
+                <table id="spread-table">
+                    <thead id="spread-thead"></thead>
+                    <tbody id="spread-tbody"></tbody>
+                </table>
+            </div>
 
-        <!-- RV: Butterfly Spreads -->
-        <h2 class="section-title">Butterfly Spreads (bps)</h2>
-        <div class="table-wrapper">
-            <table id="fly-table">
-                <thead id="fly-thead"></thead>
-                <tbody id="fly-tbody"></tbody>
-            </table>
-        </div>
+            <!-- RV: Butterfly Spreads -->
+            <h2 class="section-title">Butterfly Spreads (bps)</h2>
+            <div class="table-wrapper">
+                <table id="fly-table">
+                    <thead id="fly-thead"></thead>
+                    <tbody id="fly-tbody"></tbody>
+                </table>
+            </div>
 
-        <!-- Forward Rate Matrix -->
-        <h2 class="section-title">Forward Rate Matrix (%)</h2>
-        <div class="table-wrapper">
-            <table id="fwd-matrix-table">
-                <thead id="fwd-matrix-thead"></thead>
-                <tbody id="fwd-matrix-tbody"></tbody>
-            </table>
-        </div>
+            <!-- Forward Rate Matrix -->
+            <h2 class="section-title">Forward Rate Matrix (%)</h2>
+            <div class="table-wrapper">
+                <table id="fwd-matrix-table">
+                    <thead id="fwd-matrix-thead"></thead>
+                    <tbody id="fwd-matrix-tbody"></tbody>
+                </table>
+            </div>
 
-        <!-- Implied BOJ Rate Path -->
-        <h2 class="section-title">Implied BOJ Rate Path (%)</h2>
-        <div class="table-wrapper">
-            <table id="rate-path-table">
-                <thead id="rate-path-thead"></thead>
-                <tbody id="rate-path-tbody"></tbody>
-            </table>
+            <!-- Implied BOJ Rate Path -->
+            <h2 class="section-title">Implied BOJ Rate Path (%)</h2>
+            <div class="table-wrapper">
+                <table id="rate-path-table">
+                    <thead id="rate-path-thead"></thead>
+                    <tbody id="rate-path-tbody"></tbody>
+                </table>
+            </div>
         </div>
     </main>
 
     <footer>
-        <p>Data sourced from the <a href="https://www.mof.go.jp/english/policy/jgbs/reference/interest_rate/index.htm"
-                target="_blank" rel="noopener">Japanese Ministry of Finance</a>. Updated every Japanese business day.
+        <p id="footer-text">Data sourced from the <a
+                href="https://www.mof.go.jp/english/policy/jgbs/reference/interest_rate/index.htm" target="_blank"
+                rel="noopener">Japanese Ministry of Finance</a>. Yields are semiannual compound rates on a constant
+            maturity basis, derived from JSDA reference prices at market close (3pm JST). Updated every Japanese
+            business day.
         </p>
     </footer>
 

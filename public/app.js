@@ -5,7 +5,17 @@
 (function () {
     "use strict";
 
-    var DATA_URL = "data/yields.json";
+    var DATA_URLS = {
+        jgb: "data/yields.json",
+        ust: "data/ust_yields.json",
+        egb: "data/egb_yields.json",
+    };
+
+    var TAB_META = {
+        jgb: { subtitle: "Japanese Government Bond Yield Curves", footer: 'Data sourced from the <a href="https://www.mof.go.jp/english/policy/jgbs/reference/interest_rate/index.htm" target="_blank" rel="noopener">Japanese Ministry of Finance</a>. Yields are semiannual compound rates on a constant maturity basis, derived from JSDA reference prices at market close (3pm JST). Updated every Japanese business day.' },
+        ust: { subtitle: "US Treasury Yield Curves", footer: 'Data sourced from the <a href="https://home.treasury.gov/resource-center/data-chart-center/interest-rates/Pages/TextView.aspx?data=yield" target="_blank" rel="noopener">US Department of the Treasury</a>. Updated every US business day.' },
+        egb: { subtitle: "Euro Area Government Bond Yield Curves", footer: 'Data sourced from the <a href="https://www.ecb.europa.eu/stats/financial_markets_and_interest_rates/euro_area_yield_curves/html/index.en.html" target="_blank" rel="noopener">European Central Bank</a>. Updated every ECB business day.' },
+    };
 
     // Colours for overlay lines (index by activation order)
     var OVERLAY_COLOURS = [
@@ -13,7 +23,8 @@
         "#fb923c", "#38bdf8", "#e879f9", "#facc15", "#4ade80",
     ];
 
-    var appData = null;
+    var allData = {};   // { jgb: {...}, ust: {...}, egb: {...} }
+    var activeTab = "jgb";
     var chart = null;
     var activeOverlays = []; // list of delta-key strings currently toggled on
 
@@ -59,12 +70,17 @@
     };
 
     // ---- DOM refs (set in init) ----
-    var toggle, labelSimple, labelCompound, dataDateEl, updatedAtEl;
+    var dataDateEl, updatedAtEl;
     var tbody, thead, canvas, periodBtnContainer;
+    var jgbSections, subtitleEl, footerTextEl;
 
     // ---- Helpers ----
-    function currentMode() {
-        return toggle.checked ? "compound" : "simple";
+    function getAppData() {
+        return allData[activeTab] || null;
+    }
+
+    function isJgb() {
+        return activeTab === "jgb";
     }
 
     function formatDelta(val) {
@@ -83,7 +99,9 @@
     // ---- Build period buttons ----
     function buildPeriodButtons() {
         periodBtnContainer.innerHTML = "";
-        var keys = appData.delta_keys;
+        var data = getAppData();
+        if (!data) return;
+        var keys = data.delta_keys;
         keys.forEach(function (key) {
             var btn = document.createElement("button");
             btn.className = "period-btn";
@@ -112,11 +130,8 @@
     }
 
     // ---- Render Table ----
-    function renderTable(section) {
+    function renderTable(section, appData) {
         var keys = appData.delta_keys;
-        var colCount = 2 + keys.length;
-        var simpleSection = appData.simple;
-        var compoundSection = appData.compound;
         thead.innerHTML = "";
         var headerRow = document.createElement("tr");
         var thTenor = document.createElement("th");
@@ -134,6 +149,12 @@
 
         tbody.innerHTML = "";
         var tenors = appData.tenors;
+
+        var subLabels = [
+            { label: "High", src: section, field: "high" },
+            { label: "Low", src: section, field: "low" },
+        ];
+
         tenors.forEach(function (tenor) {
             // --- Main row ---
             var row = document.createElement("tr");
@@ -158,13 +179,7 @@
             });
             tbody.appendChild(row);
 
-            // --- Expandable sub-rows (SY High, SY Low, CY High, CY Low) ---
-            var subLabels = [
-                { label: "SY High", src: simpleSection, field: "high" },
-                { label: "SY Low", src: simpleSection, field: "low" },
-                { label: "CY High", src: compoundSection, field: "high" },
-                { label: "CY Low", src: compoundSection, field: "low" },
-            ];
+            // --- Expandable sub-rows ---
             subLabels.forEach(function (sub) {
                 var subRow = document.createElement("tr");
                 subRow.className = "hl-sub-row";
@@ -210,7 +225,7 @@
     }
 
     // ---- Render Chart ----
-    function renderChart(section) {
+    function renderChart(section, appData) {
         var tenors = appData.tenors;
         var yields = tenors.map(function (t) { return section.yields[t]; });
 
@@ -293,34 +308,31 @@
 
     // ---- Render Everything ----
     function render() {
+        var appData = getAppData();
         if (!appData) return;
 
-        var mode = currentMode();
-        var section = appData[mode];
-
-        labelSimple.classList.toggle("active", mode === "simple");
-        labelCompound.classList.toggle("active", mode === "compound");
+        var section = appData;
 
         dataDateEl.textContent = "Data Date: " + (section.date || "—");
         updatedAtEl.textContent = "Pipeline: " + (appData.updated_at || "—");
 
-        renderChart(section);
-        renderTable(section);
-        renderRvTable("spread", appData.spread_keys, section);
-        renderRvTable("fly", appData.fly_keys, section);
-        renderForwardTable("fwd-matrix", appData.fwd_matrix_keys || [], section, "matrix");
-        renderForwardTable("rate-path", appData.rate_path_keys || [], section, "path");
+        renderChart(section, appData);
+        renderTable(section, appData);
+        if (isJgb()) {
+            renderRvTable("spread", appData.spread_keys, section, appData);
+            renderRvTable("fly", appData.fly_keys, section, appData);
+            renderForwardTable("fwd-matrix", appData.fwd_matrix_keys || [], section, "matrix", appData);
+            renderForwardTable("rate-path", appData.rate_path_keys || [], section, "path", appData);
+        }
     }
 
     // ---- Render RV Table (spreads or butterflies) ----
-    function renderRvTable(prefix, rvKeys, section) {
+    function renderRvTable(prefix, rvKeys, section, appData) {
         var theadEl = document.getElementById(prefix + "-thead");
         var tbodyEl = document.getElementById(prefix + "-tbody");
         var deltaKeys = appData.delta_keys;
         var rvType = prefix === "spread" ? "spreads" : "butterflies";
         var rvData = section.rv ? section.rv[rvType] : null;
-        var simpleRv = appData.simple.rv ? appData.simple.rv[rvType] : null;
-        var compoundRv = appData.compound.rv ? appData.compound.rv[rvType] : null;
 
         // Header
         theadEl.innerHTML = "";
@@ -359,10 +371,8 @@
 
             // Expandable high/low sub-rows
             var subLabels = [
-                { label: "SY High", src: simpleRv, field: "high" },
-                { label: "SY Low", src: simpleRv, field: "low" },
-                { label: "CY High", src: compoundRv, field: "high" },
-                { label: "CY Low", src: compoundRv, field: "low" },
+                { label: "High", src: rvData, field: "high" },
+                { label: "Low", src: rvData, field: "low" },
             ];
             subLabels.forEach(function (sub) {
                 var subRow = document.createElement("tr");
@@ -401,13 +411,11 @@
     }
 
     // ---- Render Forward Table (matrix or rate path) ----
-    function renderForwardTable(prefix, fwdKeys, section, subKey) {
+    function renderForwardTable(prefix, fwdKeys, section, subKey, appData) {
         var theadEl = document.getElementById(prefix + "-thead");
         var tbodyEl = document.getElementById(prefix + "-tbody");
         var deltaKeys = appData.delta_keys;
         var fwdData = section.forwards ? section.forwards[subKey] : null;
-        var simpleFwd = appData.simple.forwards ? appData.simple.forwards[subKey] : null;
-        var compoundFwd = appData.compound.forwards ? appData.compound.forwards[subKey] : null;
 
         // Header
         theadEl.innerHTML = "";
@@ -448,10 +456,8 @@
 
             // Expandable high/low sub-rows (rates in %, 3dp)
             var subLabels = [
-                { label: "SY High", src: simpleFwd, field: "high" },
-                { label: "SY Low", src: simpleFwd, field: "low" },
-                { label: "CY High", src: compoundFwd, field: "high" },
-                { label: "CY Low", src: compoundFwd, field: "low" },
+                { label: "High", src: fwdData, field: "high" },
+                { label: "Low", src: fwdData, field: "low" },
             ];
             subLabels.forEach(function (sub) {
                 var subRow = document.createElement("tr");
@@ -488,36 +494,72 @@
         });
     }
 
+    // ---- Tab switching ----
+    function switchTab(tab) {
+        activeTab = tab;
+        activeOverlays = [];
+
+        // Update tab button active state
+        document.querySelectorAll(".tab-btn").forEach(function (btn) {
+            btn.classList.toggle("active", btn.dataset.tab === tab);
+        });
+
+        // Show/hide JGB-only elements
+        jgbSections.style.display = isJgb() ? "block" : "none";
+
+        // Update subtitle and footer
+        subtitleEl.textContent = TAB_META[tab].subtitle;
+        footerTextEl.innerHTML = TAB_META[tab].footer;
+
+        // Reset chart so it's recreated with proper data
+        if (chart) { chart.destroy(); chart = null; }
+
+        buildPeriodButtons();
+        render();
+    }
+
     // ---- Init ----
     function init() {
         // Grab DOM refs now that the DOM is guaranteed ready
-        toggle = document.getElementById("yield-toggle");
-        labelSimple = document.getElementById("label-simple");
-        labelCompound = document.getElementById("label-compound");
         dataDateEl = document.getElementById("data-date");
         updatedAtEl = document.getElementById("updated-at");
         tbody = document.getElementById("yield-tbody");
         thead = document.getElementById("yield-thead");
         canvas = document.getElementById("yield-chart");
         periodBtnContainer = document.getElementById("period-buttons");
+        jgbSections = document.getElementById("jgb-sections");
+        subtitleEl = document.getElementById("page-subtitle");
+        footerTextEl = document.getElementById("footer-text");
 
-        fetch(DATA_URL)
-            .then(function (res) {
-                if (!res.ok) throw new Error("HTTP " + res.status);
-                return res.json();
-            })
-            .then(function (json) {
-                appData = json;
-                labelSimple.classList.add("active");
-                buildPeriodButtons();
-                render();
-            })
-            .catch(function (err) {
-                console.error("Failed to load yield data:", err);
-                dataDateEl.textContent = "Failed to load data.";
+        // Load all data files in parallel
+        var tabs = ["jgb", "ust", "egb"];
+        var promises = tabs.map(function (tab) {
+            return fetch(DATA_URLS[tab])
+                .then(function (res) {
+                    if (!res.ok) throw new Error("HTTP " + res.status);
+                    return res.json();
+                })
+                .then(function (json) {
+                    allData[tab] = json;
+                })
+                .catch(function (err) {
+                    console.warn("Failed to load " + tab + " data:", err);
+                    allData[tab] = null;
+                });
+        });
+
+        Promise.all(promises).then(function () {
+            buildPeriodButtons();
+            render();
+        });
+
+        // Tab click handlers
+        document.querySelectorAll(".tab-btn").forEach(function (btn) {
+            btn.addEventListener("click", function () {
+                switchTab(btn.dataset.tab);
             });
+        });
 
-        toggle.addEventListener("change", render);
     }
 
     if (document.readyState === "loading") {

@@ -1,4 +1,4 @@
-name: Daily JGB Yield Update
+name: Daily Yield Data Update
 
 on:
   schedule:
@@ -36,11 +36,11 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add public/data/yields.json
+          git add public/data/yields.json public/data/ust_yields.json public/data/egb_yields.json
           if git diff --cached --quiet; then
             echo "No changes to commit."
           else
-            git commit -m "chore: update JGB yield data [$(date -u '+%Y-%m-%d %H:%M UTC')]"
+            git commit -m "chore: update yield data [$(date -u '+%Y-%m-%d %H:%M UTC')]"
             git push
           fi
 

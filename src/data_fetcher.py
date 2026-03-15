@@ -24,10 +24,8 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-SIMPLE_CURRENT_URL = "https://www.mof.go.jp/jgbs/reference/interest_rate/jgbcm.csv"
-SIMPLE_HISTORICAL_URL = "https://www.mof.go.jp/jgbs/reference/interest_rate/data/jgbcm_all.csv"
-COMPOUND_CURRENT_URL = "https://www.mof.go.jp/english/policy/jgbs/reference/interest_rate/jgbcme.csv"
-COMPOUND_HISTORICAL_URL = "https://www.mof.go.jp/english/policy/jgbs/reference/interest_rate/historical/jgbcme_all.csv"
+CURRENT_URL = "https://www.mof.go.jp/jgbs/reference/interest_rate/jgbcm.csv"
+HISTORICAL_URL = "https://www.mof.go.jp/jgbs/reference/interest_rate/data/jgbcm_all.csv"
 
 OUTPUT_PATH = Path(__file__).resolve().parent.parent / "public" / "data" / "yields.json"
 
@@ -84,6 +82,38 @@ BUTTERFLY_DEFS = [
     ("20s30s40s", "20Y", "30Y", "40Y"),
     ("25s30s40s", "25Y", "30Y", "40Y"),
 ]
+
+# ---------------------------------------------------------------------------
+# UST Constants
+# ---------------------------------------------------------------------------
+UST_TENORS = ["1M", "2M", "3M", "4M", "6M", "1Y", "2Y", "3Y", "5Y", "7Y", "10Y", "20Y", "30Y"]
+
+UST_COL_MAP = {
+    "1 Mo": "1M", "2 Mo": "2M", "3 Mo": "3M", "4 Mo": "4M", "6 Mo": "6M",
+    "1 Yr": "1Y", "2 Yr": "2Y", "3 Yr": "3Y", "5 Yr": "5Y", "7 Yr": "7Y",
+    "10 Yr": "10Y", "20 Yr": "20Y", "30 Yr": "30Y",
+}
+
+UST_BASE_URL = ("https://home.treasury.gov/resource-center/data-chart-center/"
+                "interest-rates/daily-treasury-rates.csv/{year}/all?"
+                "type=daily_treasury_yield_curve&field_tdr_date_value={year}&page&_format=csv")
+
+UST_OUTPUT_PATH = Path(__file__).resolve().parent.parent / "public" / "data" / "ust_yields.json"
+
+# ---------------------------------------------------------------------------
+# EGB Constants
+# ---------------------------------------------------------------------------
+EGB_TENORS = ["1Y", "2Y", "3Y", "5Y", "7Y", "10Y", "15Y", "20Y", "30Y"]
+
+_EGB_TENOR_KEYS = [f"SR_{t}" for t in EGB_TENORS]
+
+_EGB_TENOR_MAP = {f"SR_{t}": t for t in EGB_TENORS}
+
+EGB_URL = ("https://data-api.ecb.europa.eu/service/data/YC/"
+           "B.U2.EUR.4F.G_N_A.SV_C_YM." + "+".join(_EGB_TENOR_KEYS) +
+           "?detail=dataonly&format=csvdata&lastNObservations=300")
+
+EGB_OUTPUT_PATH = Path(__file__).resolve().parent.parent / "public" / "data" / "egb_yields.json"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -229,29 +259,25 @@ def merge_historical_current(hist_df: pd.DataFrame, cur_df: pd.DataFrame) -> pd.
     return combined
 
 
-def compute_deltas(df: pd.DataFrame) -> dict:
-    """Compute basis-point deltas for each tenor.
-
-    Returns a dict like:
-    {
-        "DoD": {"1Y": 0.5, "2Y": -1.0, …},
-        "2D":  {…}, "3D": {…}, "1W": {…}
-    }
-    """
+def compute_deltas(df: pd.DataFrame, tenors=None, delta_defs=None) -> dict:
+    """Compute basis-point deltas for each tenor."""
+    if tenors is None:
+        tenors = TENORS
+    if delta_defs is None:
+        delta_defs = DELTA_DEFS
     result = {}
     n = len(df)
-    for label, (idx_a, idx_b) in DELTA_DEFS.items():
+    for label, (idx_a, idx_b) in delta_defs.items():
         deltas = {}
-        actual_a = n + idx_a  # e.g. n - 1
-        actual_b = n + idx_b  # e.g. n - 2
+        actual_a = n + idx_a
+        actual_b = n + idx_b
         if actual_a < 0 or actual_b < 0:
-            # Not enough data
-            for t in TENORS:
+            for t in tenors:
                 deltas[t] = None
         else:
             row_a = df.iloc[actual_a]
             row_b = df.iloc[actual_b]
-            for t in TENORS:
+            for t in tenors:
                 try:
                     val_a = float(row_a[t])
                     val_b = float(row_b[t])
@@ -262,13 +288,15 @@ def compute_deltas(df: pd.DataFrame) -> dict:
     return result
 
 
-def build_current_yields(df: pd.DataFrame) -> dict:
+def build_current_yields(df: pd.DataFrame, tenors=None) -> dict:
     """Extract the latest yield for each tenor."""
+    if tenors is None:
+        tenors = TENORS
     if df.empty:
-        return {t: None for t in TENORS}
+        return {t: None for t in tenors}
     last = df.iloc[-1]
     yields = {}
-    for t in TENORS:
+    for t in tenors:
         try:
             yields[t] = round(float(last[t]), 3)
         except (KeyError, ValueError, TypeError):
@@ -276,25 +304,22 @@ def build_current_yields(df: pd.DataFrame) -> dict:
     return yields
 
 
-def build_historical_curves(df: pd.DataFrame) -> dict:
-    """Extract historical yield curves for each delta period.
-
-    Returns a dict like:
-    {
-        "1W": {"date": "2026/03/05", "yields": {"1Y": 1.023, …}},
-        …
-    }
-    """
+def build_historical_curves(df: pd.DataFrame, tenors=None, delta_defs=None) -> dict:
+    """Extract historical yield curves for each delta period."""
+    if tenors is None:
+        tenors = TENORS
+    if delta_defs is None:
+        delta_defs = DELTA_DEFS
     n = len(df)
     result = {}
-    for label, (_idx_a, idx_b) in DELTA_DEFS.items():
+    for label, (_idx_a, idx_b) in delta_defs.items():
         actual_b = n + idx_b
         if actual_b < 0:
-            result[label] = {"date": None, "yields": {t: None for t in TENORS}}
+            result[label] = {"date": None, "yields": {t: None for t in tenors}}
         else:
             row = df.iloc[actual_b]
             yields = {}
-            for t in TENORS:
+            for t in tenors:
                 try:
                     yields[t] = round(float(row[t]), 3)
                 except (KeyError, ValueError, TypeError):
@@ -306,30 +331,23 @@ def build_historical_curves(df: pd.DataFrame) -> dict:
     return result
 
 
-def build_high_low(df: pd.DataFrame) -> dict:
-    """Compute high/low yields for each tenor over each delta period window.
-
-    Returns a dict like:
-    {
-        "1W": {
-            "1Y": {"high": 1.05, "low": 0.98, "high_date": "2026/03/10", "low_date": "2026/03/07"},
-            …
-        },
-        …
-    }
-    """
+def build_high_low(df: pd.DataFrame, tenors=None, delta_defs=None) -> dict:
+    """Compute high/low yields for each tenor over each delta period window."""
+    if tenors is None:
+        tenors = TENORS
+    if delta_defs is None:
+        delta_defs = DELTA_DEFS
     n = len(df)
     result = {}
-    for label, (idx_a, idx_b) in DELTA_DEFS.items():
+    for label, (idx_a, idx_b) in delta_defs.items():
         actual_a = n + idx_a
         actual_b = n + idx_b
         if actual_a < 0 or actual_b < 0:
-            result[label] = {t: {"high": None, "low": None, "high_date": None, "low_date": None} for t in TENORS}
+            result[label] = {t: {"high": None, "low": None, "high_date": None, "low_date": None} for t in tenors}
             continue
-        # Slice from idx_b to idx_a inclusive
         window = df.iloc[actual_b:actual_a + 1]
         tenor_hl = {}
-        for t in TENORS:
+        for t in tenors:
             try:
                 col = pd.to_numeric(window[t], errors="coerce")
                 valid = col.dropna()
@@ -587,22 +605,86 @@ def get_latest_date(df: pd.DataFrame) -> str:
 
 
 # ---------------------------------------------------------------------------
+# UST Fetcher
+# ---------------------------------------------------------------------------
+
+def fetch_ust_data() -> pd.DataFrame:
+    """Fetch UST yield curve data from Treasury.gov for current and previous year."""
+    now = datetime.utcnow()
+    years = [now.year - 1, now.year]
+    frames = []
+    for year in years:
+        url = UST_BASE_URL.format(year=year)
+        logger.info("Fetching UST data for %d", year)
+        try:
+            resp = requests.get(url, timeout=60)
+            resp.raise_for_status()
+            df = pd.read_csv(io.StringIO(resp.text))
+            frames.append(df)
+        except Exception as e:
+            logger.warning("Failed to fetch UST %d: %s", year, e)
+    if not frames:
+        raise RuntimeError("No UST data could be fetched")
+
+    df = pd.concat(frames, ignore_index=True)
+    df = df.rename(columns=UST_COL_MAP)
+    df["Date"] = pd.to_datetime(df["Date"], format="%m/%d/%Y").dt.strftime("%Y/%m/%d")
+    df = df.drop_duplicates(subset="Date", keep="last")
+    df = df.sort_values("Date").reset_index(drop=True)
+    for t in UST_TENORS:
+        if t in df.columns:
+            df[t] = pd.to_numeric(df[t], errors="coerce")
+    return df
+
+
+# ---------------------------------------------------------------------------
+# EGB Fetcher
+# ---------------------------------------------------------------------------
+
+def fetch_egb_data() -> pd.DataFrame:
+    """Fetch EGB yield curve data from the ECB Statistical Data Warehouse."""
+    logger.info("Fetching EGB data from ECB")
+    resp = requests.get(EGB_URL, timeout=90)
+    resp.raise_for_status()
+
+    df = pd.read_csv(io.StringIO(resp.text))
+    df = df[["DATA_TYPE_FM", "TIME_PERIOD", "OBS_VALUE"]].copy()
+    df["OBS_VALUE"] = pd.to_numeric(df["OBS_VALUE"], errors="coerce")
+    df["tenor"] = df["DATA_TYPE_FM"].map(_EGB_TENOR_MAP)
+    df = df.dropna(subset=["tenor"])
+
+    wide = df.pivot_table(index="TIME_PERIOD", columns="tenor", values="OBS_VALUE", aggfunc="first")
+    wide = wide.reset_index().rename(columns={"TIME_PERIOD": "Date"})
+    wide["Date"] = wide["Date"].str.replace("-", "/")
+    wide = wide.sort_values("Date").reset_index(drop=True)
+    return wide
+
+
+def build_curve_output(df: pd.DataFrame, tenors: list) -> dict:
+    """Build standard yield/delta/curve/high_low output for a single-mode curve."""
+    return {
+        "date": get_latest_date(df),
+        "yields": build_current_yields(df, tenors),
+        "deltas": compute_deltas(df, tenors),
+        "curves": build_historical_curves(df, tenors),
+        "high_low": build_high_low(df, tenors),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    jgb_ok = False
+
+    # ------ JGB ------
     try:
-        # ------ Simple yields ------
-        simple_hist = normalise_simple(fetch_csv(SIMPLE_HISTORICAL_URL, encoding="shift_jis"))
-        simple_cur = normalise_simple(fetch_csv(SIMPLE_CURRENT_URL, encoding="shift_jis"))
-        simple = merge_historical_current(simple_hist, simple_cur)
+        hist = normalise_simple(fetch_csv(HISTORICAL_URL, encoding="shift_jis"))
+        cur = normalise_simple(fetch_csv(CURRENT_URL, encoding="shift_jis"))
+        df = merge_historical_current(hist, cur)
 
-        # ------ Compound yields ------
-        compound_hist = normalise_compound(fetch_csv(COMPOUND_HISTORICAL_URL, encoding="utf-8"))
-        compound_cur = normalise_compound(fetch_csv(COMPOUND_CURRENT_URL, encoding="utf-8"))
-        compound = merge_historical_current(compound_hist, compound_cur)
-
-        # ------ Build output ------
+        # ------ Build output (flat, same shape as UST/EGB) ------
         output = {
             "updated_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
             "tenors": TENORS,
@@ -611,36 +693,62 @@ def main() -> None:
             "fly_keys": [f[0] for f in BUTTERFLY_DEFS],
             "fwd_matrix_keys": [f"{s}Y{t}Y" for s in FORWARD_MATRIX_STARTS for t in FORWARD_MATRIX_TENORS],
             "rate_path_keys": ["Spot"] + [f"{h}Y" for h in RATE_PATH_HORIZONS if h > 0],
-            "simple": {
-                "date": get_latest_date(simple),
-                "yields": build_current_yields(simple),
-                "deltas": compute_deltas(simple),
-                "curves": build_historical_curves(simple),
-                "high_low": build_high_low(simple),
-                "rv": build_rv(simple),
-                "forwards": build_forwards(simple),
-            },
-            "compound": {
-                "date": get_latest_date(compound),
-                "yields": build_current_yields(compound),
-                "deltas": compute_deltas(compound),
-                "curves": build_historical_curves(compound),
-                "high_low": build_high_low(compound),
-                "rv": build_rv(compound),
-                "forwards": build_forwards(compound),
-            },
+            **build_curve_output(df, TENORS),
+            "rv": build_rv(df),
+            "forwards": build_forwards(df),
         }
 
         OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
         OUTPUT_PATH.write_text(json.dumps(output, indent=2, ensure_ascii=False), encoding="utf-8")
-        logger.info("Data successfully updated → %s", OUTPUT_PATH)
+        logger.info("JGB data successfully updated → %s", OUTPUT_PATH)
+        jgb_ok = True
 
     except Exception as exc:
-        logger.error("Data fetch failed: %s", exc, exc_info=True)
+        logger.error("JGB data fetch failed: %s", exc, exc_info=True)
         send_alert_email(
-            subject="[JGBsDaily] Data Update Failed",
-            body=f"The JGBsDaily data pipeline failed at {datetime.utcnow().isoformat()}.\n\nError:\n{exc}",
+            subject="[JGBsDaily] JGB Data Update Failed",
+            body=f"The JGB data pipeline failed at {datetime.utcnow().isoformat()}.\n\nError:\n{exc}",
         )
+
+    # ------ UST ------
+    try:
+        ust_df = fetch_ust_data()
+        ust_output = {
+            "updated_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "tenors": UST_TENORS,
+            "delta_keys": list(DELTA_DEFS.keys()),
+            **build_curve_output(ust_df, UST_TENORS),
+        }
+        UST_OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+        UST_OUTPUT_PATH.write_text(json.dumps(ust_output, indent=2), encoding="utf-8")
+        logger.info("UST data successfully updated → %s", UST_OUTPUT_PATH)
+    except Exception as exc:
+        logger.error("UST fetch failed: %s", exc, exc_info=True)
+        send_alert_email(
+            subject="[JGBsDaily] UST Data Update Failed",
+            body=f"The UST data pipeline failed at {datetime.utcnow().isoformat()}.\n\nError:\n{exc}",
+        )
+
+    # ------ EGB ------
+    try:
+        egb_df = fetch_egb_data()
+        egb_output = {
+            "updated_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "tenors": EGB_TENORS,
+            "delta_keys": list(DELTA_DEFS.keys()),
+            **build_curve_output(egb_df, EGB_TENORS),
+        }
+        EGB_OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+        EGB_OUTPUT_PATH.write_text(json.dumps(egb_output, indent=2), encoding="utf-8")
+        logger.info("EGB data successfully updated → %s", EGB_OUTPUT_PATH)
+    except Exception as exc:
+        logger.error("EGB fetch failed: %s", exc, exc_info=True)
+        send_alert_email(
+            subject="[JGBsDaily] EGB Data Update Failed",
+            body=f"The EGB data pipeline failed at {datetime.utcnow().isoformat()}.\n\nError:\n{exc}",
+        )
+
+    if not jgb_ok:
         sys.exit(1)
 
 
