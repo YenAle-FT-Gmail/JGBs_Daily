@@ -50,6 +50,41 @@ DELTA_DEFS = {
     "1Y":  (-1, -253),
 }
 
+# RV: Curve Spreads  (label → (long_tenor, short_tenor))  value = long − short in bps
+SPREAD_DEFS = [
+    ("2s5s",   "5Y",  "2Y"),
+    ("5s7s",   "7Y",  "5Y"),
+    ("5s10s",  "10Y", "5Y"),
+    ("7s10s",  "10Y", "7Y"),
+    ("2s10s",  "10Y", "2Y"),
+    ("10s15s", "15Y", "10Y"),
+    ("10s20s", "20Y", "10Y"),
+    ("15s20s", "20Y", "15Y"),
+    ("20s25s", "25Y", "20Y"),
+    ("20s30s", "30Y", "20Y"),
+    ("25s30s", "30Y", "25Y"),
+    ("5s20s",  "20Y", "5Y"),
+    ("5s30s",  "30Y", "5Y"),
+    ("10s30s", "30Y", "10Y"),
+    ("20s40s", "40Y", "20Y"),
+    ("30s40s", "40Y", "30Y"),
+]
+
+# RV: Butterfly Spreads  (label → (wing1, belly, wing2))  value = 2*belly − (wing1 + wing2) in bps
+BUTTERFLY_DEFS = [
+    ("2s5s10s",   "2Y",  "5Y",  "10Y"),
+    ("5s7s10s",   "5Y",  "7Y",  "10Y"),
+    ("5s10s15s",  "5Y",  "10Y", "15Y"),
+    ("5s10s20s",  "5Y",  "10Y", "20Y"),
+    ("7s10s15s",  "7Y",  "10Y", "15Y"),
+    ("10s15s20s", "10Y", "15Y", "20Y"),
+    ("10s20s30s", "10Y", "20Y", "30Y"),
+    ("15s20s25s", "15Y", "20Y", "25Y"),
+    ("20s25s30s", "20Y", "25Y", "30Y"),
+    ("20s30s40s", "20Y", "30Y", "40Y"),
+    ("25s30s40s", "25Y", "30Y", "40Y"),
+]
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -315,6 +350,63 @@ def build_high_low(df: pd.DataFrame) -> dict:
     return result
 
 
+def _compute_spread_series(df: pd.DataFrame, long_t: str, short_t: str) -> pd.Series:
+    """Return spread = long − short in bps for every row."""
+    return (pd.to_numeric(df[long_t], errors="coerce") - pd.to_numeric(df[short_t], errors="coerce")) * 100
+
+
+def _compute_fly_series(df: pd.DataFrame, w1: str, belly: str, w2: str) -> pd.Series:
+    """Return butterfly = 2*belly − (wing1 + wing2) in bps for every row."""
+    return (2 * pd.to_numeric(df[belly], errors="coerce")
+            - pd.to_numeric(df[w1], errors="coerce")
+            - pd.to_numeric(df[w2], errors="coerce")) * 100
+
+
+def _rv_current_deltas_hl(series: pd.Series, df: pd.DataFrame) -> dict:
+    """Given a bps Series aligned with df, compute current value, deltas, and high/low per period."""
+    n = len(series)
+    current = round(float(series.iloc[-1]), 1) if n > 0 and pd.notna(series.iloc[-1]) else None
+    deltas = {}
+    high_low = {}
+    for label, (idx_a, idx_b) in DELTA_DEFS.items():
+        actual_a = n + idx_a
+        actual_b = n + idx_b
+        if actual_a < 0 or actual_b < 0:
+            deltas[label] = None
+            high_low[label] = {"high": None, "low": None, "high_date": None, "low_date": None}
+            continue
+        try:
+            deltas[label] = round(float(series.iloc[actual_a] - series.iloc[actual_b]), 1)
+        except (ValueError, TypeError):
+            deltas[label] = None
+        window = series.iloc[actual_b:actual_a + 1].dropna()
+        if window.empty:
+            high_low[label] = {"high": None, "low": None, "high_date": None, "low_date": None}
+        else:
+            hi_idx = window.idxmax()
+            lo_idx = window.idxmin()
+            high_low[label] = {
+                "high": round(float(window.loc[hi_idx]), 1),
+                "low": round(float(window.loc[lo_idx]), 1),
+                "high_date": str(df.loc[hi_idx, "Date"]).strip(),
+                "low_date": str(df.loc[lo_idx, "Date"]).strip(),
+            }
+    return {"current": current, "deltas": deltas, "high_low": high_low}
+
+
+def build_rv(df: pd.DataFrame) -> dict:
+    """Build RV spreads and butterflies with current, deltas, and high/low."""
+    spreads = {}
+    for label, long_t, short_t in SPREAD_DEFS:
+        s = _compute_spread_series(df, long_t, short_t)
+        spreads[label] = _rv_current_deltas_hl(s, df)
+    flies = {}
+    for label, w1, belly, w2 in BUTTERFLY_DEFS:
+        s = _compute_fly_series(df, w1, belly, w2)
+        flies[label] = _rv_current_deltas_hl(s, df)
+    return {"spreads": spreads, "butterflies": flies}
+
+
 def get_latest_date(df: pd.DataFrame) -> str:
     if df.empty:
         return ""
@@ -342,12 +434,15 @@ def main() -> None:
             "updated_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
             "tenors": TENORS,
             "delta_keys": list(DELTA_DEFS.keys()),
+            "spread_keys": [s[0] for s in SPREAD_DEFS],
+            "fly_keys": [f[0] for f in BUTTERFLY_DEFS],
             "simple": {
                 "date": get_latest_date(simple),
                 "yields": build_current_yields(simple),
                 "deltas": compute_deltas(simple),
                 "curves": build_historical_curves(simple),
                 "high_low": build_high_low(simple),
+                "rv": build_rv(simple),
             },
             "compound": {
                 "date": get_latest_date(compound),
@@ -355,6 +450,7 @@ def main() -> None:
                 "deltas": compute_deltas(compound),
                 "curves": build_historical_curves(compound),
                 "high_low": build_high_low(compound),
+                "rv": build_rv(compound),
             },
         }
 

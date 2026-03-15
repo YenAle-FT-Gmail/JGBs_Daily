@@ -161,9 +161,9 @@
             // --- Expandable sub-rows (SY High, SY Low, CY High, CY Low) ---
             var subLabels = [
                 { label: "SY High", src: simpleSection, field: "high" },
-                { label: "SY Low",  src: simpleSection, field: "low"  },
+                { label: "SY Low", src: simpleSection, field: "low" },
                 { label: "CY High", src: compoundSection, field: "high" },
-                { label: "CY Low",  src: compoundSection, field: "low"  },
+                { label: "CY Low", src: compoundSection, field: "low" },
             ];
             subLabels.forEach(function (sub) {
                 var subRow = document.createElement("tr");
@@ -306,6 +306,96 @@
 
         renderChart(section);
         renderTable(section);
+        renderRvTable("spread", appData.spread_keys, section);
+        renderRvTable("fly", appData.fly_keys, section);
+    }
+
+    // ---- Render RV Table (spreads or butterflies) ----
+    function renderRvTable(prefix, rvKeys, section) {
+        var theadEl = document.getElementById(prefix + "-thead");
+        var tbodyEl = document.getElementById(prefix + "-tbody");
+        var deltaKeys = appData.delta_keys;
+        var rvType = prefix === "spread" ? "spreads" : "butterflies";
+        var rvData = section.rv ? section.rv[rvType] : null;
+        var simpleRv = appData.simple.rv ? appData.simple.rv[rvType] : null;
+        var compoundRv = appData.compound.rv ? appData.compound.rv[rvType] : null;
+
+        // Header
+        theadEl.innerHTML = "";
+        var hr = document.createElement("tr");
+        var thName = document.createElement("th"); thName.textContent = prefix === "spread" ? "Spread" : "Fly"; hr.appendChild(thName);
+        var thCur = document.createElement("th"); thCur.textContent = "Current"; hr.appendChild(thCur);
+        deltaKeys.forEach(function (k) {
+            var th = document.createElement("th"); th.textContent = k; hr.appendChild(th);
+        });
+        theadEl.appendChild(hr);
+
+        // Body
+        tbodyEl.innerHTML = "";
+        rvKeys.forEach(function (key) {
+            var item = rvData ? rvData[key] : null;
+            var row = document.createElement("tr");
+            row.className = "tenor-row";
+            row.style.cursor = "pointer";
+
+            var tdName = document.createElement("td");
+            tdName.innerHTML = '<span class="expand-arrow">&#9654;</span> ' + key;
+            row.appendChild(tdName);
+
+            var tdCur = document.createElement("td");
+            tdCur.textContent = item && item.current !== null ? item.current.toFixed(1) : "\u2014";
+            row.appendChild(tdCur);
+
+            deltaKeys.forEach(function (dk) {
+                var td = document.createElement("td");
+                var dv = item && item.deltas ? item.deltas[dk] : null;
+                td.textContent = formatDelta(dv);
+                td.className = deltaClass(dv);
+                row.appendChild(td);
+            });
+            tbodyEl.appendChild(row);
+
+            // Expandable high/low sub-rows
+            var subLabels = [
+                { label: "SY High", src: simpleRv, field: "high" },
+                { label: "SY Low",  src: simpleRv, field: "low"  },
+                { label: "CY High", src: compoundRv, field: "high" },
+                { label: "CY Low",  src: compoundRv, field: "low"  },
+            ];
+            subLabels.forEach(function (sub) {
+                var subRow = document.createElement("tr");
+                subRow.className = "hl-sub-row";
+                var tdLabel = document.createElement("td");
+                tdLabel.className = "hl-label";
+                tdLabel.textContent = sub.label;
+                subRow.appendChild(tdLabel);
+                // blank current column
+                var tdBlank = document.createElement("td"); tdBlank.textContent = ""; subRow.appendChild(tdBlank);
+                deltaKeys.forEach(function (dk) {
+                    var td = document.createElement("td");
+                    td.className = "hl-val";
+                    var hl = sub.src && sub.src[key] && sub.src[key].high_low && sub.src[key].high_low[dk];
+                    if (hl && hl[sub.field] !== null && hl[sub.field] !== undefined) {
+                        td.textContent = hl[sub.field].toFixed(1);
+                        td.title = (hl[sub.field + "_date"] || "").slice(5);
+                        td.className += sub.field === "high" ? " hl-high" : " hl-low";
+                    } else {
+                        td.textContent = "\u2014";
+                    }
+                    subRow.appendChild(td);
+                });
+                tbodyEl.appendChild(subRow);
+            });
+
+            row.addEventListener("click", function () {
+                var expanded = row.classList.toggle("expanded");
+                var next = row.nextElementSibling;
+                while (next && next.classList.contains("hl-sub-row")) {
+                    next.style.display = expanded ? "table-row" : "none";
+                    next = next.nextElementSibling;
+                }
+            });
+        });
     }
 
     // ---- Init ----
