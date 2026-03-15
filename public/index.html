@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JGBsDaily – Japanese Government Bond Yields</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+</head>
+
+<body>
+    <header>
+        <h1>JGBsDaily</h1>
+        <p class="subtitle">Japanese Government Bond Yield Curves</p>
+    </header>
+
+    <main>
+        <!-- Toggle -->
+        <div class="toggle-container">
+            <span class="toggle-label" id="label-simple">Simple Yield</span>
+            <label class="switch">
+                <input type="checkbox" id="yield-toggle">
+                <span class="slider"></span>
+            </label>
+            <span class="toggle-label" id="label-compound">Compound Yield</span>
+        </div>
+
+        <div class="meta-info">
+            <span id="data-date"></span>
+            <span id="updated-at"></span>
+        </div>
+
+        <!-- Chart period overlay buttons -->
+        <div class="period-selector">
+            <span class="period-label">Compare:</span>
+            <div class="period-buttons" id="period-buttons"></div>
+        </div>
+
+        <!-- Chart -->
+        <div class="chart-wrapper">
+            <canvas id="yield-chart"></canvas>
+        </div>
+
+        <!-- Data Table -->
+        <div class="table-wrapper">
+            <table id="yield-table">
+                <thead id="yield-thead">
+                    <tr>
+                        <th>Tenor</th>
+                        <th>Yield (%)</th>
+                    </tr>
+                </thead>
+                <tbody id="yield-tbody"></tbody>
+            </table>
+        </div>
+    </main>
+
+    <footer>
+        <p>Data sourced from the <a href="https://www.mof.go.jp/english/policy/jgbs/reference/interest_rate/index.htm"
+                target="_blank" rel="noopener">Japanese Ministry of Finance</a>. Updated every Japanese business day.
+        </p>
+    </footer>
+
+    <script src="app.js"></script>
+</body>
+
+</html>
