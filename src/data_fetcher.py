@@ -271,6 +271,50 @@ def build_historical_curves(df: pd.DataFrame) -> dict:
     return result
 
 
+def build_high_low(df: pd.DataFrame) -> dict:
+    """Compute high/low yields for each tenor over each delta period window.
+
+    Returns a dict like:
+    {
+        "1W": {
+            "1Y": {"high": 1.05, "low": 0.98, "high_date": "2026/03/10", "low_date": "2026/03/07"},
+            …
+        },
+        …
+    }
+    """
+    n = len(df)
+    result = {}
+    for label, (idx_a, idx_b) in DELTA_DEFS.items():
+        actual_a = n + idx_a
+        actual_b = n + idx_b
+        if actual_a < 0 or actual_b < 0:
+            result[label] = {t: {"high": None, "low": None, "high_date": None, "low_date": None} for t in TENORS}
+            continue
+        # Slice from idx_b to idx_a inclusive
+        window = df.iloc[actual_b:actual_a + 1]
+        tenor_hl = {}
+        for t in TENORS:
+            try:
+                col = pd.to_numeric(window[t], errors="coerce")
+                valid = col.dropna()
+                if valid.empty:
+                    tenor_hl[t] = {"high": None, "low": None, "high_date": None, "low_date": None}
+                else:
+                    hi_idx = valid.idxmax()
+                    lo_idx = valid.idxmin()
+                    tenor_hl[t] = {
+                        "high": round(float(valid.loc[hi_idx]), 3),
+                        "low": round(float(valid.loc[lo_idx]), 3),
+                        "high_date": str(df.loc[hi_idx, "Date"]).strip(),
+                        "low_date": str(df.loc[lo_idx, "Date"]).strip(),
+                    }
+            except (KeyError, ValueError, TypeError):
+                tenor_hl[t] = {"high": None, "low": None, "high_date": None, "low_date": None}
+        result[label] = tenor_hl
+    return result
+
+
 def get_latest_date(df: pd.DataFrame) -> str:
     if df.empty:
         return ""
@@ -303,12 +347,14 @@ def main() -> None:
                 "yields": build_current_yields(simple),
                 "deltas": compute_deltas(simple),
                 "curves": build_historical_curves(simple),
+                "high_low": build_high_low(simple),
             },
             "compound": {
                 "date": get_latest_date(compound),
                 "yields": build_current_yields(compound),
                 "deltas": compute_deltas(compound),
                 "curves": build_historical_curves(compound),
+                "high_low": build_high_low(compound),
             },
         }
 

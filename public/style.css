@@ -257,6 +257,49 @@ tbody tr:hover {
     color: var(--text-muted);
 }
 
+/* Expandable high/low rows ----------------------------------------- */
+.expand-arrow {
+    display: inline-block;
+    font-size: 0.65rem;
+    transition: transform 0.2s;
+    margin-right: 0.25rem;
+    color: var(--text-muted);
+}
+
+.tenor-row.expanded .expand-arrow {
+    transform: rotate(90deg);
+}
+
+.hl-sub-row {
+    display: none;
+}
+
+.hl-sub-row td {
+    padding: 0.35rem 0.75rem;
+    font-size: 0.78rem;
+    border-bottom: 1px solid rgba(42, 45, 58, 0.4);
+}
+
+.hl-label {
+    text-align: left !important;
+    padding-left: 1.5rem !important;
+    color: var(--text-muted);
+    font-weight: 500;
+    font-style: italic;
+}
+
+.hl-val {
+    font-variant-numeric: tabular-nums;
+}
+
+.hl-high {
+    color: var(--red);
+}
+
+.hl-low {
+    color: var(--green);
+}
+
 /* Footer ----------------------------------------------------------- */
 footer {
     text-align: center;

@@ -113,8 +113,10 @@
 
     // ---- Render Table ----
     function renderTable(section) {
-        // Build dynamic header: Tenor | Yield | each delta_key (bps)
         var keys = appData.delta_keys;
+        var colCount = 2 + keys.length;
+        var simpleSection = appData.simple;
+        var compoundSection = appData.compound;
         thead.innerHTML = "";
         var headerRow = document.createElement("tr");
         var thTenor = document.createElement("th");
@@ -130,24 +132,23 @@
         });
         thead.appendChild(headerRow);
 
-        // Build body rows
         tbody.innerHTML = "";
         var tenors = appData.tenors;
         tenors.forEach(function (tenor) {
+            // --- Main row ---
             var row = document.createElement("tr");
+            row.className = "tenor-row";
+            row.style.cursor = "pointer";
 
-            // Tenor label
             var tdTenor = document.createElement("td");
-            tdTenor.textContent = tenor;
+            tdTenor.innerHTML = '<span class="expand-arrow">&#9654;</span> ' + tenor;
             row.appendChild(tdTenor);
 
-            // Yield – 3 decimal places
             var tdYield = document.createElement("td");
             var yieldVal = section.yields[tenor];
             tdYield.textContent = yieldVal !== null && yieldVal !== undefined ? yieldVal.toFixed(3) : "—";
             row.appendChild(tdYield);
 
-            // Deltas – 1 decimal place
             keys.forEach(function (dk) {
                 var td = document.createElement("td");
                 var dv = section.deltas[dk] ? section.deltas[dk][tenor] : null;
@@ -155,8 +156,56 @@
                 td.className = deltaClass(dv);
                 row.appendChild(td);
             });
-
             tbody.appendChild(row);
+
+            // --- Expandable sub-rows (SY High, SY Low, CY High, CY Low) ---
+            var subLabels = [
+                { label: "SY High", src: simpleSection, field: "high" },
+                { label: "SY Low",  src: simpleSection, field: "low"  },
+                { label: "CY High", src: compoundSection, field: "high" },
+                { label: "CY Low",  src: compoundSection, field: "low"  },
+            ];
+            subLabels.forEach(function (sub) {
+                var subRow = document.createElement("tr");
+                subRow.className = "hl-sub-row";
+
+                var tdLabel = document.createElement("td");
+                tdLabel.className = "hl-label";
+                tdLabel.textContent = sub.label;
+                subRow.appendChild(tdLabel);
+
+                // Blank yield column for sub-row
+                var tdBlank = document.createElement("td");
+                tdBlank.textContent = "";
+                subRow.appendChild(tdBlank);
+
+                keys.forEach(function (dk) {
+                    var td = document.createElement("td");
+                    td.className = "hl-val";
+                    var hl = sub.src.high_low && sub.src.high_low[dk] && sub.src.high_low[dk][tenor];
+                    if (hl && hl[sub.field] !== null && hl[sub.field] !== undefined) {
+                        var dateStr = hl[sub.field + "_date"] || "";
+                        var shortDate = dateStr.slice(5); // MM/DD
+                        td.textContent = hl[sub.field].toFixed(3);
+                        td.title = shortDate;
+                        td.className += sub.field === "high" ? " hl-high" : " hl-low";
+                    } else {
+                        td.textContent = "—";
+                    }
+                    subRow.appendChild(td);
+                });
+                tbody.appendChild(subRow);
+            });
+
+            // Toggle expand/collapse
+            row.addEventListener("click", function () {
+                var expanded = row.classList.toggle("expanded");
+                var next = row.nextElementSibling;
+                while (next && next.classList.contains("hl-sub-row")) {
+                    next.style.display = expanded ? "table-row" : "none";
+                    next = next.nextElementSibling;
+                }
+            });
         });
     }
 
