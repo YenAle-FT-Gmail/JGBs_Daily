@@ -308,6 +308,8 @@
         renderTable(section);
         renderRvTable("spread", appData.spread_keys, section);
         renderRvTable("fly", appData.fly_keys, section);
+        renderForwardTable("fwd-matrix", appData.fwd_matrix_keys || [], section, "matrix");
+        renderForwardTable("rate-path", appData.rate_path_keys || [], section, "path");
     }
 
     // ---- Render RV Table (spreads or butterflies) ----
@@ -358,9 +360,9 @@
             // Expandable high/low sub-rows
             var subLabels = [
                 { label: "SY High", src: simpleRv, field: "high" },
-                { label: "SY Low",  src: simpleRv, field: "low"  },
+                { label: "SY Low", src: simpleRv, field: "low" },
                 { label: "CY High", src: compoundRv, field: "high" },
-                { label: "CY Low",  src: compoundRv, field: "low"  },
+                { label: "CY Low", src: compoundRv, field: "low" },
             ];
             subLabels.forEach(function (sub) {
                 var subRow = document.createElement("tr");
@@ -377,6 +379,94 @@
                     var hl = sub.src && sub.src[key] && sub.src[key].high_low && sub.src[key].high_low[dk];
                     if (hl && hl[sub.field] !== null && hl[sub.field] !== undefined) {
                         td.textContent = hl[sub.field].toFixed(1);
+                        td.title = (hl[sub.field + "_date"] || "").slice(5);
+                        td.className += sub.field === "high" ? " hl-high" : " hl-low";
+                    } else {
+                        td.textContent = "\u2014";
+                    }
+                    subRow.appendChild(td);
+                });
+                tbodyEl.appendChild(subRow);
+            });
+
+            row.addEventListener("click", function () {
+                var expanded = row.classList.toggle("expanded");
+                var next = row.nextElementSibling;
+                while (next && next.classList.contains("hl-sub-row")) {
+                    next.style.display = expanded ? "table-row" : "none";
+                    next = next.nextElementSibling;
+                }
+            });
+        });
+    }
+
+    // ---- Render Forward Table (matrix or rate path) ----
+    function renderForwardTable(prefix, fwdKeys, section, subKey) {
+        var theadEl = document.getElementById(prefix + "-thead");
+        var tbodyEl = document.getElementById(prefix + "-tbody");
+        var deltaKeys = appData.delta_keys;
+        var fwdData = section.forwards ? section.forwards[subKey] : null;
+        var simpleFwd = appData.simple.forwards ? appData.simple.forwards[subKey] : null;
+        var compoundFwd = appData.compound.forwards ? appData.compound.forwards[subKey] : null;
+
+        // Header
+        theadEl.innerHTML = "";
+        var hr = document.createElement("tr");
+        var thName = document.createElement("th");
+        thName.textContent = subKey === "matrix" ? "Forward" : "Horizon";
+        hr.appendChild(thName);
+        var thCur = document.createElement("th"); thCur.textContent = "Current"; hr.appendChild(thCur);
+        deltaKeys.forEach(function (k) {
+            var th = document.createElement("th"); th.textContent = k; hr.appendChild(th);
+        });
+        theadEl.appendChild(hr);
+
+        // Body
+        tbodyEl.innerHTML = "";
+        fwdKeys.forEach(function (key) {
+            var item = fwdData ? fwdData[key] : null;
+            var row = document.createElement("tr");
+            row.className = "tenor-row";
+            row.style.cursor = "pointer";
+
+            var tdName = document.createElement("td");
+            tdName.innerHTML = '<span class="expand-arrow">&#9654;</span> ' + key;
+            row.appendChild(tdName);
+
+            var tdCur = document.createElement("td");
+            tdCur.textContent = item && item.current !== null ? item.current.toFixed(3) : "\u2014";
+            row.appendChild(tdCur);
+
+            deltaKeys.forEach(function (dk) {
+                var td = document.createElement("td");
+                var dv = item && item.deltas ? item.deltas[dk] : null;
+                td.textContent = formatDelta(dv);
+                td.className = deltaClass(dv);
+                row.appendChild(td);
+            });
+            tbodyEl.appendChild(row);
+
+            // Expandable high/low sub-rows (rates in %, 3dp)
+            var subLabels = [
+                { label: "SY High", src: simpleFwd, field: "high" },
+                { label: "SY Low", src: simpleFwd, field: "low" },
+                { label: "CY High", src: compoundFwd, field: "high" },
+                { label: "CY Low", src: compoundFwd, field: "low" },
+            ];
+            subLabels.forEach(function (sub) {
+                var subRow = document.createElement("tr");
+                subRow.className = "hl-sub-row";
+                var tdLabel = document.createElement("td");
+                tdLabel.className = "hl-label";
+                tdLabel.textContent = sub.label;
+                subRow.appendChild(tdLabel);
+                var tdBlank = document.createElement("td"); tdBlank.textContent = ""; subRow.appendChild(tdBlank);
+                deltaKeys.forEach(function (dk) {
+                    var td = document.createElement("td");
+                    td.className = "hl-val";
+                    var hl = sub.src && sub.src[key] && sub.src[key].high_low && sub.src[key].high_low[dk];
+                    if (hl && hl[sub.field] !== null && hl[sub.field] !== undefined) {
+                        td.textContent = hl[sub.field].toFixed(3);
                         td.title = (hl[sub.field + "_date"] || "").slice(5);
                         td.className += sub.field === "high" ? " hl-high" : " hl-low";
                     } else {

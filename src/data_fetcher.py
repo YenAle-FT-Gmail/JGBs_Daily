@@ -407,6 +407,179 @@ def build_rv(df: pd.DataFrame) -> dict:
     return {"spreads": spreads, "butterflies": flies}
 
 
+# ---------------------------------------------------------------------------
+# Forward Rates
+# ---------------------------------------------------------------------------
+
+# Tenor → years mapping
+_TENOR_YEARS = {t: int(t.replace("Y", "")) for t in TENORS}
+
+# Forward matrix: (start_years, tenor_years) pairs
+FORWARD_MATRIX_STARTS = [1, 2, 3, 5, 10]
+FORWARD_MATRIX_TENORS = [1, 2, 3, 5, 10]
+
+# Implied BOJ rate path horizons (1Y forward at each start)
+RATE_PATH_HORIZONS = [0, 1, 2, 3, 4, 5, 7, 9]
+
+
+def _bootstrap_forward_row(row: pd.Series) -> dict:
+    """Given a single row of compound yields, compute zero rates and forwards.
+
+    Uses compound yields directly as par rates and bootstraps zero-coupon rates,
+    then computes forward rates from the zero curve.
+
+    Returns dict: {(start, tenor): forward_rate_pct, ...}
+    """
+    import math
+
+    # Build zero-rate curve from compound yields via bootstrapping
+    # Compound yields from MOF are par yields (semi-annual compounding assumed
+    # for simplicity we treat them as continuously-compounded spot rates, which
+    # for government bonds at these tenors is a very close approximation).
+    zeros = {}
+    for t in TENORS:
+        try:
+            y = float(row[t])
+            if pd.isna(y):
+                continue
+            yrs = _TENOR_YEARS[t]
+            zeros[yrs] = y / 100.0  # convert % to decimal
+        except (KeyError, ValueError, TypeError):
+            continue
+
+    if not zeros:
+        return {}
+
+    # Interpolate missing integer years via linear interp on available zeros
+    available = sorted(zeros.keys())
+    def _interp_zero(yr):
+        if yr in zeros:
+            return zeros[yr]
+        # Find bracketing points
+        lo = [a for a in available if a <= yr]
+        hi = [a for a in available if a >= yr]
+        if not lo or not hi:
+            return None
+        lo_yr, hi_yr = lo[-1], hi[0]
+        if lo_yr == hi_yr:
+            return zeros[lo_yr]
+        frac = (yr - lo_yr) / (hi_yr - lo_yr)
+        return zeros[lo_yr] + frac * (zeros[hi_yr] - zeros[lo_yr])
+
+    # Compute forward rate: f(s, s+t) = ((1+z_{s+t})^{s+t} / (1+z_s)^s)^{1/t} - 1
+    result = {}
+    for start in FORWARD_MATRIX_STARTS:
+        for tenor in FORWARD_MATRIX_TENORS:
+            end = start + tenor
+            z_end = _interp_zero(end)
+            z_start = _interp_zero(start)
+            if z_end is None or z_start is None:
+                continue
+            try:
+                df_end = (1 + z_end) ** end
+                df_start = (1 + z_start) ** start
+                if df_start <= 0:
+                    continue
+                fwd = (df_end / df_start) ** (1.0 / tenor) - 1
+                result[(start, tenor)] = round(fwd * 100, 3)  # back to %
+            except (ZeroDivisionError, ValueError):
+                continue
+
+    # Rate path: 1Y forward at each horizon
+    for horizon in RATE_PATH_HORIZONS:
+        if horizon == 0:
+            z1 = _interp_zero(1)
+            if z1 is not None:
+                result[("path", horizon)] = round(z1 * 100, 3)
+        else:
+            end = horizon + 1
+            z_end = _interp_zero(end)
+            z_start = _interp_zero(horizon)
+            if z_end is None or z_start is None:
+                continue
+            try:
+                df_end = (1 + z_end) ** end
+                df_start = (1 + z_start) ** horizon
+                if df_start <= 0:
+                    continue
+                fwd = df_end / df_start - 1
+                result[("path", horizon)] = round(fwd * 100, 3)
+            except (ZeroDivisionError, ValueError):
+                continue
+
+    return result
+
+
+def _build_forward_series(df: pd.DataFrame, key: tuple) -> pd.Series:
+    """Compute a forward rate for every row in df, returning a Series."""
+    vals = []
+    for _, row in df.iterrows():
+        fwds = _bootstrap_forward_row(row)
+        vals.append(fwds.get(key))
+    return pd.Series(vals, index=df.index)
+
+
+def build_forwards(df: pd.DataFrame) -> dict:
+    """Build forward rate matrix + rate path with current, deltas, high/low."""
+    # Forward matrix
+    matrix = {}
+    for start in FORWARD_MATRIX_STARTS:
+        for tenor in FORWARD_MATRIX_TENORS:
+            key = (start, tenor)
+            label = f"{start}Y{tenor}Y"
+            s = _build_forward_series(df, key)
+            # Convert to bps-style current/deltas/hl using the helper
+            # but we want rates in %, so use a modified version
+            matrix[label] = _fwd_current_deltas_hl(s, df)
+
+    # Rate path
+    path = {}
+    for horizon in RATE_PATH_HORIZONS:
+        key = ("path", horizon)
+        label = f"{horizon}Y" if horizon > 0 else "Spot"
+        s = _build_forward_series(df, key)
+        path[label] = _fwd_current_deltas_hl(s, df)
+
+    return {"matrix": matrix, "path": path}
+
+
+def _fwd_current_deltas_hl(series: pd.Series, df: pd.DataFrame) -> dict:
+    """Like _rv_current_deltas_hl but for forward rates in % (3dp) and deltas in bps (1dp)."""
+    n = len(series)
+    current = round(float(series.iloc[-1]), 3) if n > 0 and pd.notna(series.iloc[-1]) else None
+    deltas = {}
+    high_low = {}
+    for label, (idx_a, idx_b) in DELTA_DEFS.items():
+        actual_a = n + idx_a
+        actual_b = n + idx_b
+        if actual_a < 0 or actual_b < 0:
+            deltas[label] = None
+            high_low[label] = {"high": None, "low": None, "high_date": None, "low_date": None}
+            continue
+        try:
+            va = series.iloc[actual_a]
+            vb = series.iloc[actual_b]
+            if pd.notna(va) and pd.notna(vb):
+                deltas[label] = round(float(va - vb) * 100, 1)  # bps
+            else:
+                deltas[label] = None
+        except (ValueError, TypeError):
+            deltas[label] = None
+        window = series.iloc[actual_b:actual_a + 1].dropna()
+        if window.empty:
+            high_low[label] = {"high": None, "low": None, "high_date": None, "low_date": None}
+        else:
+            hi_idx = window.idxmax()
+            lo_idx = window.idxmin()
+            high_low[label] = {
+                "high": round(float(window.loc[hi_idx]), 3),
+                "low": round(float(window.loc[lo_idx]), 3),
+                "high_date": str(df.loc[hi_idx, "Date"]).strip(),
+                "low_date": str(df.loc[lo_idx, "Date"]).strip(),
+            }
+    return {"current": current, "deltas": deltas, "high_low": high_low}
+
+
 def get_latest_date(df: pd.DataFrame) -> str:
     if df.empty:
         return ""
@@ -436,6 +609,8 @@ def main() -> None:
             "delta_keys": list(DELTA_DEFS.keys()),
             "spread_keys": [s[0] for s in SPREAD_DEFS],
             "fly_keys": [f[0] for f in BUTTERFLY_DEFS],
+            "fwd_matrix_keys": [f"{s}Y{t}Y" for s in FORWARD_MATRIX_STARTS for t in FORWARD_MATRIX_TENORS],
+            "rate_path_keys": ["Spot"] + [f"{h}Y" for h in RATE_PATH_HORIZONS if h > 0],
             "simple": {
                 "date": get_latest_date(simple),
                 "yields": build_current_yields(simple),
@@ -443,6 +618,7 @@ def main() -> None:
                 "curves": build_historical_curves(simple),
                 "high_low": build_high_low(simple),
                 "rv": build_rv(simple),
+                "forwards": build_forwards(simple),
             },
             "compound": {
                 "date": get_latest_date(compound),
@@ -451,6 +627,7 @@ def main() -> None:
                 "curves": build_historical_curves(compound),
                 "high_low": build_high_low(compound),
                 "rv": build_rv(compound),
+                "forwards": build_forwards(compound),
             },
         }
 
